@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Instagram Info API — Credit: Anmol (@FOREVER_HIDDEN)
+# Instagram Info API — Credit: SB-SAKIB (@sakib01994)
 # Premium Version for Vercel Deployment
 # ------------------------------------------------------------
 
@@ -74,7 +74,7 @@ def insta_info(username):
         # প্রিমিয়াম ডাটা ফরম্যাট
         response_data = {
             "status": "success",
-            "credit": "Anmol (@FOREVER_HIDDEN)",
+            "credit": "SB-SAKIB (@sakib01994)",
             "profile": {
                 "id": user.get("id"),
                 "username": user.get("username"),
