@@ -1,6 +1,6 @@
 # ------------------------------------------------------------
 # Instagram Info API — Credit: SB-SAKIB (@sakib01994)
-# PREMIUM ULTRA VERSION - ALL POSSIBLE DATA EXTRACTION
+# PREMIUM VERSION - MAXIMUM DATA EXTRACTION
 # ------------------------------------------------------------
 
 from flask import Flask, jsonify, request
@@ -29,21 +29,19 @@ def fetch_instagram_profile(username):
     }
 
     session = requests.Session()
-    
     try:
-        # বট ডিটেকশন এড়াতে ভেরিয়েবল ডিলে
-        time.sleep(random.uniform(1.2, 2.8))
-        response = session.get(url, headers=headers, timeout=25)
+        # Rate limit এড়াতে সামান্য ডিলে
+        time.sleep(random.uniform(0.5, 1.5))
+        response = session.get(url, headers=headers, timeout=20)
         
         if response.status_code == 200:
             return response.json()
         elif response.status_code == 404:
             return {"error": "user_not_found"}
         elif response.status_code == 429:
-            return {"error": "rate_limited", "msg": "Instagram IP Blocked. Use Proxy or try after some time."}
+            return {"error": "rate_limited", "msg": "Instagram IP Blocked. Use Proxy or try after 10 mins."}
         else:
-            return {"error": f"http_{response.status_code}", "body": response.text[:200]}
-            
+            return {"error": f"http_{response.status_code}"}
     except Exception as e:
         return {"error": "exception", "details": str(e)}
 
@@ -57,11 +55,11 @@ def home():
 
 @app.route("/api/")
 def insta_info():
-    # কুয়েরি প্যারামিটার থেকে ইউজারনেম নেওয়া
+    # ইউআরএল থেকে ইউজারনেম নেওয়া (?username=...)
     username = request.args.get('username')
     
     if not username:
-        return jsonify({"error": "missing_parameter", "msg": "Please provide a username (?username=name)"}), 400
+        return jsonify({"error": "missing_username", "msg": "Please provide a username parameter."}), 400
 
     data = fetch_instagram_profile(username)
     
@@ -71,68 +69,60 @@ def insta_info():
     try:
         user = data.get("data", {}).get("user")
         if not user:
-            return jsonify({"error": "parsing_failed", "raw": data}), 500
+            return jsonify({"error": "parsing_failed", "msg": "User data not found in response."}), 500
 
-        # প্রিমিয়াম লেভেলের ডাটা এক্সট্রাকশন
+        # এ টু জেড ডেটা এক্সট্রাকশন
         full_data = {
             "status": "success",
             "developer": "SB-SAKIB",
-            "account_details": {
+            "profile_info": {
                 "user_id": user.get("id"),
-                "fbid": user.get("fbid"),
                 "username": user.get("username"),
                 "full_name": user.get("full_name"),
+                "verified": user.get("is_verified"),
+                "is_private": user.get("is_private"),
                 "biography": user.get("biography"),
+                "bio_links": user.get("bio_links"),
+                "category": user.get("category_name"),
+                "business_category": user.get("business_category_name"),
+                "is_professional": user.get("is_professional_account"),
+                "is_business": user.get("is_business_account"),
+                "profile_pic_hd": user.get("profile_pic_url_hd"),
                 "external_url": user.get("external_url"),
                 "pronouns": user.get("pronouns"),
-                "is_verified": user.get("is_verified"),
-                "is_private": user.get("is_private"),
-                "is_professional_account": user.get("is_professional_account"),
-                "is_business_account": user.get("is_business_account"),
-                "category_name": user.get("category_name"),
-                "business_category_name": user.get("business_category_name"),
-                "is_joined_recently": user.get("is_joined_recently"),
-                "has_ar_effects": user.get("has_ar_effects"),
-                "has_clips": user.get("has_clips"),
+                "fbid": user.get("fbid"),
                 "has_guides": user.get("has_guides"),
                 "has_channel": user.get("has_channel"),
-                "profile_pic_url": user.get("profile_pic_url"),
-                "profile_pic_url_hd": user.get("profile_pic_url_hd"),
+                "is_joined_recently": user.get("is_joined_recently"),
             },
             "statistics": {
                 "followers": user.get("edge_followed_by", {}).get("count"),
                 "following": user.get("edge_follow", {}).get("count"),
                 "total_posts": user.get("edge_owner_to_timeline_media", {}).get("count"),
-                "total_igtv_videos": user.get("edge_felix_video_timeline", {}).get("count"),
-            },
-            "mutual_info": {
-                "mutual_followers_count": user.get("edge_mutual_followed_by", {}).get("count", 0),
             },
             "highlights": [
                 {"id": h.get("id"), "title": h.get("title")} 
                 for h in user.get("highlight_reel_ids", [])
             ],
-            "recent_posts": []
+            "posts": []
         }
 
-        # পোস্টের আরও গভীর ডাটা এক্সট্রাকশন
+        # ফিড পোস্টের বিস্তারিত তথ্য
         edges = user.get("edge_owner_to_timeline_media", {}).get("edges", [])
         for edge in edges:
             node = edge.get("node", {})
-            full_data["recent_posts"].append({
-                "post_id": node.get("id"),
+            full_data["posts"].append({
+                "id": node.get("id"),
                 "shortcode": node.get("shortcode"),
-                "dimensions": node.get("dimensions"),
+                "type": "video" if node.get("is_video") else "image",
                 "display_url": node.get("display_url"),
-                "is_video": node.get("is_video"),
                 "video_url": node.get("video_url") if node.get("is_video") else None,
-                "video_view_count": node.get("video_view_count") if node.get("is_video") else 0,
-                "caption": node.get("edge_media_to_caption", {}).get("edges", [{}])[0].get("node", {}).get("text", ""),
+                "caption": node.get("edge_media_to_caption", {}).get("edges", [{}])[0].get("node", {}).get("text", "") if node.get("edge_media_to_caption", {}).get("edges") else "",
                 "likes": node.get("edge_liked_by", {}).get("count"),
                 "comments": node.get("edge_media_to_comment", {}).get("count"),
-                "comments_disabled": node.get("comments_disabled"),
-                "taken_at": node.get("taken_at_timestamp"),
+                "timestamp": node.get("taken_at_timestamp"),
                 "location": node.get("location", {}).get("name") if node.get("location") else None,
+                "views": node.get("video_view_count") if node.get("is_video") else 0,
                 "accessibility_caption": node.get("accessibility_caption")
             })
 
@@ -142,5 +132,4 @@ def insta_info():
         return jsonify({"error": "processing_error", "details": str(e)}), 500
 
 if __name__ == "__main__":
-    # লোকাল রান করার জন্য
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000)
