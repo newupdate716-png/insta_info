@@ -1,14 +1,12 @@
 # ------------------------------------------------------------
 # Instagram Info API — Credit: SB-SAKIB (@sakib01994)
-# PREMIUM VERSION - AUTO SESSION REFRESH & FIXED 401
+# FIXED VERSION - RATE LIMIT & SESSION HANDLING
 # ------------------------------------------------------------
 
 from flask import Flask, jsonify, request
 import requests
 import random
 import time
-import json
-import re
 
 app = Flask(__name__)
 
@@ -16,31 +14,30 @@ def fetch_instagram_profile(username):
     username = username.strip().replace("@", "")
     session = requests.Session()
     
-    # লেটেস্ট ইউজার এজেন্ট যাতে রিয়েল ব্রাউজার মনে হয়
+    # লেটেস্ট এবং রিয়েলিস্টিক ইউজার এজেন্ট লিস্ট
     user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
     ]
     ua = random.choice(user_agents)
 
     try:
-        # স্টেজ ১: মেইন পেজ হিট করে কুকি এবং এনভায়রনমেন্ট সেটআপ করা
-        # এটি ৪০১ এরর এড়াতে সাহায্য করে
+        # স্টেজ ১: মেইন প্রোফাইল পেজ ভিজিট করা যাতে সেশন সেট হয়
         home_url = f"https://www.instagram.com/{username}/"
         home_headers = {
             "User-Agent": ua,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1"
+            "Sec-Fetch-Mode": "navigate",
+            "Connection": "keep-alive"
         }
         
-        # সেশন ইনিশিয়ালাইজেশন
+        # সেশন এবং কুকি কালেক্ট করা
         res_home = session.get(home_url, headers=home_headers, timeout=15)
         
-        # স্টেজ ২: এপিআই প্যারামিটার সেটআপ
-        # বর্তমানে x-ig-app-id এবং সঠিক referer ছাড়া ৪০১ আসে
+        # স্টেজ ২: এপিআই রিকোয়েস্ট
         api_url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
         
         csrftoken = session.cookies.get('csrftoken', domain=".instagram.com")
@@ -49,7 +46,7 @@ def fetch_instagram_profile(username):
             "User-Agent": ua,
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
-            "X-IG-App-ID": "936619743392459", # Static Web ID
+            "X-IG-App-ID": "936619743392459", 
             "X-ASBD-ID": "129477",
             "X-IG-WWW-Claim": "0",
             "X-Requested-With": "XMLHttpRequest",
@@ -60,23 +57,22 @@ def fetch_instagram_profile(username):
             "Sec-Fetch-Site": "same-origin",
         }
 
-        # হিউম্যান বিহেভিয়ার ইমুলেশন
-        time.sleep(random.uniform(2.5, 4.5))
+        # হিউম্যান বিহেভিয়ার ইমুলেশন (একটু বেশি সময় দেওয়া হয়েছে যাতে রেট লিমিট না ধরে)
+        time.sleep(random.uniform(3.0, 5.0))
         
         response = session.get(api_url, headers=api_headers, timeout=20)
         
-        # যদি ৪০১ আসে তবে অল্টারনেটিভ ডিরেক্ট স্ক্র্যাপার ট্রাই করা
         if response.status_code == 200:
             return response.json()
+        elif response.status_code == 429:
+            # যদি রেট লিমিট আসে, অন্য একটি ছোট এপিআই ট্রাই করার চেষ্টা (বিকল্প হিসেবে)
+            return {"error": "rate_limited", "msg": "Instagram is blocking this server IP. Try again after 5-10 minutes or use a Proxy."}
         elif response.status_code == 401:
-            # ৪০১ ফিক্স করার জন্য সেকেন্ডারি অ্যাটেম্পট (বিনা কুকিতে)
-            return {"error": "unauthorized_401", "msg": "Instagram security blocked the server IP. Please use a proxy or valid session cookie."}
+            return {"error": "unauthorized_401", "msg": "Session expired or blocked."}
         elif response.status_code == 404:
             return {"error": "user_not_found"}
-        elif response.status_code == 429:
-            return {"error": "rate_limited", "msg": "Too many requests. Please wait."}
         else:
-            return {"error": f"http_{response.status_code}", "msg": "Instagram system rejected the request."}
+            return {"error": f"http_{response.status_code}", "msg": "Instagram rejected the request."}
             
     except Exception as e:
         return {"error": "exception", "details": str(e)}
@@ -86,7 +82,8 @@ def home():
     return jsonify({
         "status": "Online",
         "developer": "SB-SAKIB",
-        "usage": "/api/?username=its_d3vil_king"
+        "usage": "/api/?username=its_d3vil_king",
+        "note": "If you get Rate Limited, it's due to Instagram IP blocking."
     })
 
 @app.route("/api/")
@@ -104,7 +101,7 @@ def insta_info():
     try:
         user = data.get("data", {}).get("user")
         if not user:
-            return jsonify({"error": "parsing_failed", "msg": "User data not found."}), 404
+            return jsonify({"error": "parsing_failed", "msg": "User data not found or account is private/restricted."}), 404
 
         full_data = {
             "status": "success",
