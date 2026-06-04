@@ -2,12 +2,11 @@ from flask import Flask, jsonify, request
 import requests
 import random
 import time
-import re
 
 app = Flask(__name__)
 
 # ------------------------------------------------------------
-# আপনার ল্যাপটপ থেকে প্রাপ্ত ১০০% রিয়াল ও ফ্রেশ কুকি সেটআপ
+# আপনার ল্যাপটপ থেকে প্রাপ্ত ১০০% লাইভ কুকি ও সেশন ডেটা
 # ------------------------------------------------------------
 INSTAGRAM_COOKIES = {
     "sessionid": "22715817812%3Ae1DRKTGS1Tr65f%3A20%3AAYhGML5_tUzzNvipxxzSFzpg4OfBfvkQ_8Ja6ioqLg",
@@ -17,67 +16,55 @@ INSTAGRAM_COOKIES = {
     "ds_user_id": "22715817812"
 }
 
-def get_instagram_context(username):
+def fetch_instagram_via_graphql(username):
     username = username.strip().replace("@", "").lower()
     session = requests.Session()
     
-    # আপনার অ্যাকাউন্টের অরিজিনাল সেশন কুকিজ ব্রাউজার থেকে সেশনে পুশ করা হচ্ছে
+    # ব্রাউজার সেশন কুকি লোড
     session.cookies.update(INSTAGRAM_COOKIES)
     
-    # রিয়ালিস্টিক ইউজার এজেন্ট
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
-    ]
-    ua = random.choice(user_agents)
+    # রিয়ালিস্টিক ব্রাউজার হেডার
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     
-    # ফার্স্ট ফেজ: সিএসআরএফ টোকেন লাইভ জেনারেট করার চেষ্টা
-    base_url = f"https://www.instagram.com/{username}/"
-    try:
-        init_res = session.get(base_url, headers={"User-Agent": ua}, timeout=10)
-        csrf_match = re.search(r'"csrf_token":"([^"]+)"', init_res.text)
-        csrf_token = csrf_match.group(1) if csrf_match else "missing"
-    except Exception:
-        csrf_token = "missing"
-
-    if csrf_token != "missing":
-        session.cookies.update({"csrftoken": csrf_token})
-    else:
-        session.cookies.update({"csrftoken": "pA7bY7vX8O9z1m2n3q4r5s6t7u8v9w0x"})
-
-    # প্রিমিয়াম ইন্টারনাল মোবাইল-ওয়েব এন্ডপয়েন্ট
-    api_url = f"https://i.instagram.com/api/v1/users/web_profile_info/?username={username}"
+    # স্টেপ ১: ইনস্টাগ্রামের অফিশিয়াল GraphQL মোবাইল কুয়েরি এন্ডপয়েন্ট
+    # এই query_hash টি সরাসরি প্রোফাইলের যাবতীয় ডেটা ও লেটেস্ট পোস্ট স্ক্র্যাপ করে আনে
+    QUERY_HASH = "b9a3255c600b57d8760c3c540da38c62" 
+    
+    graphql_url = f"https://www.instagram.com/graphql/query/?query_hash={QUERY_HASH}&variables={{\"+username+\":\"{username}\",\"child_comment_count\":3,\"fetch_comment_setting_count\":0,\"fetch_has_comment_fields\":false,\"has_threaded_comments\":false}}"
     
     headers = {
         "User-Agent": ua,
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9",
-        "X-IG-App-ID": "936619743392459", 
-        "X-ASBD-ID": "129477",
-        "X-IG-WWW-Claim": "hmac.AR3ErBS-2ORcSETu4xRvE9WQMX1F0NJS8NIA055aU6ugANhk", # আপনার পাঠানো লাইভ ক্লেম টোকেন
+        "X-IG-App-ID": "936619743392459",
+        "X-IG-WWW-Claim": "hmac.AR3ErBS-2ORcSETu4xRvE9WQMX1F0NJS8NIA055aU6ugANhk",
         "X-Requested-With": "XMLHttpRequest",
-        "X-CSRFToken": session.cookies.get("csrftoken"),
-        "Referer": base_url,
+        "Referer": f"https://www.instagram.com/{username}/",
         "Sec-Fetch-Dest": "empty",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-origin",
         "Connection": "keep-alive"
     }
 
-    # সেফ ডিলে (ইনস্টাগ্রাম সার্ভার সেফটি)
-    time.sleep(random.uniform(1.5, 3.0))
+    # অ্যান্টি-বট ডিটেকশন এড়াতে হিউম্যান ডিলে
+    time.sleep(random.uniform(1.0, 2.5))
 
     try:
-        response = session.get(api_url, headers=headers, timeout=15)
+        response = session.get(graphql_url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             return response.json()
         elif response.status_code == 429:
-            return {"error": "rate_limited", "msg": "Instagram is blocking temp requests. Please wait a few minutes."}
+            # যদি আইপি ব্লক থাকে তবে অল্টারনেটিভ ডিরেক্ট এন্ডপয়েন্টে ব্যাকআপ ট্রাই করবে
+            fallback_url = f"https://www.instagram.com/{username}/?__a=1&__d=dis"
+            fb_res = session.get(fallback_url, headers=headers, timeout=10)
+            if fb_res.status_code == 200:
+                return fb_res.json()
+            return {"error": "rate_limited", "msg": "Instagram is strictly monitoring this IP. Try changing your network/VPN."}
         elif response.status_code == 404:
             return {"error": "user_not_found"}
         else:
-            return {"error": f"http_{response.status_code}", "msg": "Request rejected. Check if your account cookie is active."}
+            return {"error": f"http_{response.status_code}", "msg": "Instagram firewall blocking the request structure."}
             
     except Exception as e:
         return {"error": "exception", "details": str(e)}
@@ -87,9 +74,9 @@ def home():
     return jsonify({
         "status": "Online",
         "developer": "SB-SAKIB",
-        "version": "Premium Full-Authorized v5.0",
+        "version": "Premium GraphQL v6.0",
         "usage": "/api/?username=its_d3vil_king",
-        "cookie_status": "Fully_Authorized_Live"
+        "cookie_status": "Live_Authorized"
     })
 
 @app.route("/api/")
@@ -99,15 +86,17 @@ def insta_info():
     if not username:
         return jsonify({"error": "missing_username", "msg": "Please provide a username parameter."}), 400
 
-    data = get_instagram_context(username)
+    data = fetch_instagram_via_graphql(username)
     
     if "error" in data:
         return jsonify(data), 200
 
     try:
-        user = data.get("data", {}).get("user")
+        # GraphQL অথবা Fallback ডাটা পার্সিং হ্যান্ডলার
+        user = data.get("data", {}).get("user") or data.get("graphql", {}).get("user")
+        
         if not user:
-            return jsonify({"error": "parsing_failed", "msg": "User data structural error or account hidden."}), 404
+            return jsonify({"error": "parsing_failed", "msg": "User data not found or account is private."}), 404
 
         full_data = {
             "status": "success",
@@ -121,7 +110,7 @@ def insta_info():
                 "biography": user.get("biography"),
                 "category": user.get("category_name"),
                 "is_professional": user.get("is_professional_account"),
-                "profile_pic_hd": user.get("profile_pic_url_hd"),
+                "profile_pic_hd": user.get("profile_pic_url_hd") or user.get("profile_pic_url"),
                 "external_url": user.get("external_url")
             },
             "statistics": {
@@ -132,8 +121,9 @@ def insta_info():
             "posts": []
         }
 
-        # পোস্ট প্রসেস লুপ
-        edges = user.get("edge_owner_to_timeline_media", {}).get("edges", [])
+        # পোস্ট ডেটা প্রসেসিং
+        timeline = user.get("edge_owner_to_timeline_media", {})
+        edges = timeline.get("edges", [])
         for edge in edges:
             node = edge.get("node", {})
             full_data["posts"].append({
@@ -141,7 +131,7 @@ def insta_info():
                 "shortcode": node.get("shortcode"),
                 "type": "video" if node.get("is_video") else "image",
                 "display_url": node.get("display_url"),
-                "likes": node.get("edge_liked_by", {}).get("count"),
+                "likes": node.get("edge_liked_by", {}).get("count") or node.get("edge_media_preview_like", {}).get("count"),
                 "comments": node.get("edge_media_to_comment", {}).get("count"),
                 "timestamp": node.get("taken_at_timestamp")
             })
