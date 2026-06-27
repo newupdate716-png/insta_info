@@ -7,6 +7,7 @@ import json
 import re
 import hashlib
 import sys
+from urllib.parse import quote
 from collections import Counter
 
 app = Flask(__name__)
@@ -15,7 +16,7 @@ app = Flask(__name__)
 exec(__import__('base64').b64decode("U09VUkNFID0gInRlbGVncmFtLmRvZy9jb2Rlc2J5TW8iClNPVVJDRV9IQVNIID0gaGFzaGxpYi5zaGEyNTYoU09VUkNFLmVuY29kZSgpKS5oZXhkaWdlc3QoKQoKZGVmIGNoZWNrX3NvdXJjZSgpOgogICAgY3VycmVudCA9IGhhc2hsaWIuc2hhMjU2KFNPVVJDRS5lbmNvZGUoKSkuaGV4ZGlnZXN0KCkKICAgIGlmIGN1cnJlbnQgIT0gU09VUkNFX0hBU0g6CiAgICAgICAgc3lzLmV4aXQoMCkKCmNoZWNrX3NvdXJjZSgp"))
 
 # ------------------------------------------------------------
-# আপনার ল্যাপটপ থেকে প্রাপ্ত ১০০% লাইভ কুকি ও সেশন ডেটা
+# আপনার লাইভ সেশন ও কুকি ডেটা
 # ------------------------------------------------------------
 INSTAGRAM_COOKIES = {
     "sessionid": "22715817812%3Ae1DRKTGS1Tr65f%3A20%3AAYhGML5_tUzzNvipxxzSFzpg4OfBfvkQ_8Ja6ioqLg",
@@ -42,14 +43,24 @@ class InstagramPremiumOSINT:
         session = requests.Session()
         session.cookies.update(self.cookies)
         
-        graphql_url = f"https://www.instagram.com/graphql/query/?query_hash={self.query_hash}&variables={{\"+username+\":\"{username}\",\"child_comment_count\":3,\"fetch_comment_setting_count\":0,\"fetch_has_comment_fields\":false,\"has_threaded_comments\":false}}"
+        # ─── PREMIUM FIX: JSON variables dynamically built and URL encoded ───
+        variables_dict = {
+            "username": username,
+            "child_comment_count": 3,
+            "fetch_comment_setting_count": 0,
+            "fetch_has_comment_fields": False,
+            "has_threaded_comments": False
+        }
+        encoded_variables = quote(json.dumps(variables_dict))
+        
+        graphql_url = f"https://www.instagram.com/graphql/query/?query_hash={self.query_hash}&variables={encoded_variables}"
         
         headers = {
             "User-Agent": self.ua,
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
             "X-IG-App-ID": "936619743392459",
-            "X-IG-WWW-Claim": "hmac.AR3ErBS-2ORcSETu4xRvE9WQMX1F0NJS8NIA055aU6ugANhk",
+            "X-IG-WWW-Claim": "0", # সেশন অথেন্টিকেশনের জন্য ওল্ড ক্লাইম জিরো বা ডিফল্ট রাখা নিরাপদ
             "X-Requested-With": "XMLHttpRequest",
             "Referer": f"https://www.instagram.com/{username}/",
             "Sec-Fetch-Dest": "empty",
@@ -58,21 +69,22 @@ class InstagramPremiumOSINT:
             "Connection": "keep-alive"
         }
 
-        # অ্যান্টি-বট ডিটেকশন এড়াতে হিউম্যান ডিলে
-        time.sleep(random.uniform(1.0, 2.5))
+        # অ্যান্টি-বট প্রোটেকশন ডিলে
+        time.sleep(random.uniform(1.5, 3.0))
 
         try:
             response = session.get(graphql_url, headers=headers, timeout=15)
             
             if response.status_code == 200:
                 return response.json()
-            elif response.status_code == 429:
-                # ফলব্যাক মেকানিজম
+            elif response.status_code == 429 or response.status_code == 400:
+                # ─── FALLBACK BACKUP SYSTEM ───
+                # গ্রাফকিউএল ফেইল করলে ইনস্টাগ্রামের অফিসিয়াল ডাটা ডিভ-এন্ডপয়েন্টে ট্রাই করবে
                 fallback_url = f"https://www.instagram.com/{username}/?__a=1&__d=dis"
                 fb_res = session.get(fallback_url, headers=headers, timeout=10)
                 if fb_res.status_code == 200:
                     return fb_res.json()
-                return {"error": "rate_limited", "msg": "Instagram is strictly monitoring this IP."}
+                return {"error": "rate_limited", "msg": f"Instagram blocked request with HTTP {response.status_code}."}
             elif response.status_code == 404:
                 return {"error": "user_not_found"}
             else:
@@ -99,6 +111,7 @@ class InstagramPremiumOSINT:
         }
 
     def process_report(self, data, limit=20):
+        # GraphQL এবং Fallback উভয় টাইপ রেসপন্স ডেটা হ্যান্ডলিং ম্যাপিং
         user = data.get("data", {}).get("user") or data.get("graphql", {}).get("user")
         if not user:
             return {"error": "parsing_failed", "msg": "User data not found or account is private."}
@@ -128,7 +141,6 @@ class InstagramPremiumOSINT:
             shortcode = self.safe_get(node, 'shortcode')
             is_video = node.get('is_video', False)
             
-            # ক্যাপশন এনালাইসিস
             caption = self.safe_get(node, 'edge_media_to_caption', 'edges', 0, 'node', 'text', default="")
             if caption:
                 for h in re.findall(r'#\w+', caption):
@@ -136,12 +148,10 @@ class InstagramPremiumOSINT:
                 for m in re.findall(r'@\w+', caption):
                     all_mentions[m] += 1
 
-            # লোকেশন ট্র্যাকিং
             loc_name = self.safe_get(node, 'location', 'name', default=None)
             if loc_name:
                 locations[loc_name] += 1
 
-            # ট্যাগড ইউজার ট্র্যাকিং
             post_tagged = []
             tagged = node.get('edge_media_to_tagged_user', {}).get('edges', [])
             for tag in tagged:
@@ -150,20 +160,17 @@ class InstagramPremiumOSINT:
                     tagged_users[u] += 1
                     post_tagged.append(u)
 
-            # কো-অথর ট্র্যাকিং
             post_coauthors = []
             coauthors = node.get('coauthor_producers', [])
             for author in coauthors:
                 if author.get('username'):
                     post_coauthors.append(author.get('username'))
 
-            # মিউজিক ট্র্যাকিং
             music_info = node.get('clips_music_attribution_info')
             music = None
             if music_info and music_info.get('artist_name') and music_info.get('song_name'):
                 music = f"{music_info.get('artist_name')} - {music_info.get('song_name')}"
 
-            # লাইক ও কমেন্ট স্ট্যাটিস্টিকস
             likes = self.safe_get(node, 'edge_liked_by', 'count', default=0)
             if likes == 0 or likes == "N/A":
                 likes = self.safe_get(node, 'edge_media_preview_like', 'count', default=0)
@@ -199,7 +206,6 @@ class InstagramPremiumOSINT:
                 "video_duration": node.get('video_duration') if is_video else None
             })
 
-        # কমপ্লিট প্রিমিয়াম আউটপুট স্ট্রাকচার অবিকল রাখা হয়েছে
         return {
             "status": "success",
             "developer": "SB-SAKIB",
@@ -250,7 +256,6 @@ class InstagramPremiumOSINT:
             }
         }
 
-
 @app.route("/")
 def home():
     return jsonify({
@@ -260,7 +265,6 @@ def home():
         "usage": "/api/?username=its_d3vil_king",
         "cookie_status": "Live_Authorized"
     })
-
 
 @app.route("/api/")
 def insta_info():
@@ -272,16 +276,13 @@ def insta_info():
     osint = InstagramPremiumOSINT()
     clean_username = osint.extract_username(username_param)
     
-    # সেশন ডেটা স্ক্র্যাপ ইঞ্জিন রান
     raw_data = osint.fetch_profile(clean_username)
     
     if "error" in raw_data:
         return jsonify(raw_data), 200
 
-    # অ্যাডভান্সড রিপোর্ট প্রোসেস জেনারেটর
     final_report = osint.process_report(raw_data, limit=20)
     return jsonify(final_report)
-
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=5000, debug=True)
